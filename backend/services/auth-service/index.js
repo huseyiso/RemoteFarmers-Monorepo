@@ -10,7 +10,10 @@ const app = express();
 
 // Middleware'ler
 app.use(cors()); // CORS'u tüm istekler için etkinleştirelim
-app.use(express.json());
+// Body-parser'ı daha büyük bir limitle ve daha esnek bir şekilde yapılandırıyoruz
+// Bu, proxy'den gelen isteklerdeki olası gövde boyutu sorunlarını çözer.
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // --- API Rotaları ---
 
@@ -92,50 +95,56 @@ app.post('/register', async (req, res) => {
     }
 });
 
-// POST /login - Kullanıcı girişi
+// services/auth-service/index.js
+
+// POST /login - Kullanıcı girişi (Daha Sağlam Hali)
 app.post('/login', async (req, res) => {
     const { email, password } = req.body;
 
-    // Basit doğrulama
     if (!email || !password) {
         return res.status(400).json({ message: 'E-posta ve şifre zorunludur.' });
     }
 
     try {
-        // 1. Kullanıcıyı e-postasına göre veritabanında bul
+        // 1. Kullanıcıyı bul
         const userQuery = 'SELECT * FROM users WHERE email = $1';
         const { rows } = await db.query(userQuery, [email]);
 
-        // Kullanıcı bulunamadıysa hata dön
+        // Kullanıcı bulunamadıysa, özel bir hata mesajı ile 401 Unauthorized dön.
+        // Bu, en olası hata noktası.
         if (rows.length === 0) {
+            console.log(`[Auth Service] Giriş denemesi başarısız: E-posta bulunamadı (${email})`);
             return res.status(401).json({ message: 'Geçersiz e-posta veya şifre.' });
         }
         
         const user = rows[0];
 
-        // 2. Gelen şifre ile veritabanındaki hash'lenmiş şifreyi karşılaştır
+        // 2. Şifreleri karşılaştır
         const isPasswordCorrect = await bcrypt.compare(password, user.password_hash);
 
-        // Şifre yanlışsa hata dön
+        // Şifre yanlışsa, yine aynı genel hata mesajını dön.
+        // (Güvenlik için "şifre yanlış" veya "e-posta yok" diye belirtmiyoruz)
         if (!isPasswordCorrect) {
+            console.log(`[Auth Service] Giriş denemesi başarısız: Şifre yanlış (${email})`);
             return res.status(401).json({ message: 'Geçersiz e-posta veya şifre.' });
         }
 
-        // 3. Şifre doğruysa, kullanıcıya özel bir JWT (JSON Web Token) oluştur
+        // 3. JWT Oluştur
         const jwtSecret = process.env.JWT_SECRET;
         if (!jwtSecret) {
-            // Bu kontrol, .env dosyasını unutmamanı sağlar
-            throw new Error('JWT_SECRET tanımlanmamış. Lütfen .env dosyasını kontrol edin.');
+            console.error("[Auth Service] HATA: JWT_SECRET tanımlanmamış!");
+            return res.status(500).json({ message: 'Sunucu yapılandırma hatası.' });
         }
         
         const token = jwt.sign(
-            { userId: user.id }, // Token'ın içine kullanıcı ID'sini koyuyoruz
+            { userId: user.id },
             jwtSecret,
-            { expiresIn: '1h' } // Token 1 saat geçerli olsun
+            { expiresIn: '1h' }
         );
 
-        // Başarılı giriş yanıtını ve token'ı dön
-        res.status(200).json({
+        console.log(`[Auth Service] Giriş başarılı: ${email}`);
+        // Başarılı yanıtı dön
+        return res.status(200).json({
             message: 'Giriş başarılı.',
             token: token,
             user: {
@@ -146,8 +155,9 @@ app.post('/login', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Giriş sırasında hata:', error);
-        res.status(500).json({ message: 'Sunucuda bir hata oluştu.' });
+        // Veritabanı bağlantısı gibi beklenmedik bir hata olursa burası çalışır.
+        console.error('[Auth Service] Giriş sırasında beklenmedik hata:', error);
+        return res.status(500).json({ message: 'Sunucuda bir hata oluştu.' });
     }
 });
 

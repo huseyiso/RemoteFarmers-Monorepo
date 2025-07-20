@@ -12,7 +12,7 @@ app.use(cors());
 
 // Auth Service Yönlendirmesi
 app.use('/api/auth', createProxyMiddleware({ 
-    target: 'http://localhost:5001', 
+    target: 'http://auth-service:5001', 
     changeOrigin: true,
     pathRewrite: {
         '^/api/auth': '',

@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Veritabanı Servisi
+  database:
+    image: postgis/postgis:16-3.4
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=docker123 # Lütfen burayı kendi şifrenle değiştir
+      - POSTGRES_DB=remotefarmers_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # --- YENİ EKLENDİ: Healthcheck ---
+    # Docker'a, bu servisin ne zaman "sağlıklı" (hazır) kabul edileceğini söyler.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d remotefarmers_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # API Gateway Servisi
+  gateway:
+    build:
+      context: ./backend/gateway
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/gateway/.env
+    # --- GÜNCELLENDİ: depends_on ---
+    depends_on:
+      auth-service:
+        condition: service_started # Sadece başlamasını beklemesi yeterli
+
+  # Auth Servisi
+  auth-service:
+    build:
+      context: ./backend/services/auth-service
+    ports:
+      - "5001:5001"
+    env_file:
+      - ./backend/services/auth-service/.env
+    # --- GÜNCELLENDİ: depends_on ---
+    # Artık sadece veritabanının başlamasını değil, "sağlıklı" olmasını bekleyecek.
+    depends_on:
+      database:
+        condition: service_healthy
+
+  # Frontend Servisi
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./frontend/.env.local
+    depends_on:
+      - gateway
+
+volumes:
+  pgdata:
